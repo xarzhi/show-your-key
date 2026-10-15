@@ -42,6 +42,8 @@ impl Default for Settings {
             mouse_passthrough: false,
             // 默认背景透明（用户要求"背景透明改成默认效果"）。
             transparent: true,
+            // 键位透明背景默认关闭：默认还是"键帽带底、看得清"的常规外观。
+            keycap_transparent: false,
             simple_mode: false,
             dark: false,
             autostart: false,
@@ -60,6 +62,13 @@ fn default_keyboard_height() -> f32 {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PersistConfig {
     transparent: bool,
+    /// 键位透明背景。
+    ///
+    /// 必须加 `serde(default)`：这是后加的字段，旧配置文件里没有它，
+    /// 缺省会让**整个** `PersistConfig` 反序列化失败，从而把用户所有设置
+    /// 一起重置成默认值（而不是只丢这一个字段）。
+    #[serde(default)]
+    keycap_transparent: bool,
     simple_mode: bool,
     dark: bool,
     autostart: bool,
@@ -75,6 +84,7 @@ impl From<&Settings> for PersistConfig {
         hidden_keys.sort_unstable();
         Self {
             transparent: s.transparent,
+            keycap_transparent: s.keycap_transparent,
             simple_mode: s.simple_mode,
             dark: s.dark,
             autostart: s.autostart,
@@ -98,6 +108,7 @@ pub fn load_persisted() -> Settings {
     if let Ok(text) = std::fs::read_to_string(config_path()) {
         if let Ok(cfg) = serde_json::from_str::<PersistConfig>(&text) {
             s.transparent = cfg.transparent;
+            s.keycap_transparent = cfg.keycap_transparent;
             s.simple_mode = cfg.simple_mode;
             s.dark = cfg.dark;
             s.autostart = cfg.autostart;

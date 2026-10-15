@@ -230,6 +230,7 @@ impl KeyView {
         def: &KeyDef,
         pressed: bool,
         dark: bool,
+        keycap_transparent: bool,
         font_size: gpui_kit::Pixels,
     ) -> gpui_kit::Div {
         let (key_bg, key_border, text_col) = if dark {
@@ -244,17 +245,39 @@ impl KeyView {
             (rgba(0xffffffff), rgba(0x00000030), rgba(0x000000ff))
         };
 
-        let mut key = div()
+        // 键位透明背景：键帽不画背景填充，只留边框与文字。
+        //
+        // 只在**未按下**时清空背景：按下态的高亮填充是这个程序存在的意义
+        // （录屏要看出哪个键被按下），若一并抹掉就彻底失去按键反馈。
+        let key_bg = if keycap_transparent && !pressed {
+            rgba(0x00000000)
+        } else {
+            key_bg
+        };
+
+        let key = div()
             .absolute()
             .rounded_md()
             .bg(key_bg)
-            .border_1()
             .border_color(key_border)
             .flex()
             .items_center()
             .justify_center()
             .text_color(text_col)
             .text_size(font_size);
+
+        // 键位透明背景时，边框与文字一并加粗。
+        //
+        // 透明键帽背后是任意桌面内容：1px 细边 + 常规字重压在浅色或花色背景上
+        // 几乎糊成一片，加粗后才在任何背景上都能看清键位轮廓。
+        // 2px 是安全值：窗口最小高度 120 → 键帽单位下限 16 → 键帽仍有 13px，
+        // 去掉两侧各 2px 边框还剩 9px 内区，不会把键帽"填死"。
+        let mut key = if keycap_transparent {
+            key.border_2().font_weight(gpui_kit::FontWeight::BOLD)
+        } else {
+            key.border_1()
+        };
+
         // 空标签（如空格键）不渲染文本子元素。
         if !def.label.is_empty() {
             key = key.child(def.label);
@@ -299,7 +322,13 @@ impl KeyView {
             let h = def.h * unit - GAP;
 
             let key = self
-                .render_key(def, pressed, dark, px(font_size))
+                .render_key(
+                    def,
+                    pressed,
+                    dark,
+                    settings.keycap_transparent,
+                    px(font_size),
+                )
                 .top(px(y))
                 .left(px(x))
                 .w(px(w))
@@ -395,11 +424,14 @@ impl Render for KeyView {
                 st.drag = None;
             })
             .on_scroll_wheel(|event, window, cx| {
-                // 设置面板打开期间不改窗口尺寸：gpui 内部 resize 会顺带把键盘窗口
-                // 提到最前并抢焦点，压住设置面板（与自动同步宽度同一条规则）。
-                if state(cx).settings_open {
-                    return;
-                }
+                // 这里**故意不受 `settings_open` 守卫限制**。
+                //
+                // 那条守卫是给"自动同步宽度"用的：面板一打开，每改一次设置都会
+                // 触发 resize，而 gpui 内部的 `SetWindowPos` 不带 `SWP_NOACTIVATE`，
+                // 会把键盘窗口提到最前并抢走面板焦点 —— 自动路径必须拦。
+                // 滚轮是**用户显式动作**，他要的就是改键盘大小，连它一起拦掉
+                // 会让人以为"滚轮缩放坏了"（实测：面板打开时滚 2 格尺寸纹丝不动）。
+                // 代价只是键盘窗口会被提到面板前面一次，点一下面板即可恢复。
                 // Windows 平台把 WM_MOUSEWHEEL 转成 Lines：一格 ≈ 3 行
                 // （`wheel_scroll_lines` 默认值）。取垂直分量换算成"档数"，向上滚 = 放大。
                 let ticks = match event.delta {

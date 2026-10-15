@@ -40,18 +40,21 @@ fn toggle_key_visible(vk: u16, cx: &mut App) {
 pub struct SettingsView {
     /// 观察全局状态，设置变化时刷新（必须持有，否则订阅被丢弃）。
     _sub: gpui_kit::Subscription,
+    /// 面板激活/失活订阅（必须持有）。
+    _activation_sub: gpui_kit::Subscription,
     /// 面板关闭时的收尾（必须持有）。
     _release_sub: gpui_kit::Subscription,
 }
 
 /// 主键盘窗口是常驻"始终置顶"的，若不处理，设置面板一打开就会被键盘压住
-/// （非置顶窗口永远不可能盖在置顶窗口上面）。
-/// 用户明确要求设置面板本身不置顶，所以这里改成：
-/// **打开设置面板时把主键盘降为普通窗口，关闭时立刻恢复置顶。**
+/// （非置顶窗口永远不可能盖在置顶窗口上面）。用户明确要求设置面板本身不置顶，
+/// 所以这里改成：**面板在前台时把主键盘降为普通窗口，面板一失活立刻恢复置顶。**
 ///
-/// 用"随面板生命周期"而不是"随面板焦点"来做，是因为 gpui 的
-/// `PlatformWindow::resize` 用的是不带 `SWP_NOACTIVATE` 的 `SetWindowPos`，
-/// 主键盘窗口一旦自适应宽度就会抢走前台焦点，基于焦点的判断会被反复打乱。
+/// 判据取"面板是否在前台"而不是"面板是否还开着"——原因见 `SettingsView::new` 里
+/// 激活观察器的注释。
+///
+/// 注意主键盘窗口**不能**在所有情况下都保持置顶：设置面板打开后如果键盘仍然置顶，
+/// 它会一直压住面板（非置顶窗口永远盖不过置顶窗口），面板等于不可用。
 fn set_keyboard_topmost(on_top: bool) {
     if crate::win32::has_main_hwnd() {
         crate::win32::set_always_on_top(crate::win32::main_hwnd(), on_top);
@@ -59,8 +62,22 @@ fn set_keyboard_topmost(on_top: bool) {
 }
 
 impl SettingsView {
-    fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sub = cx.observe_global::<state::AppState>(|_this, cx| cx.notify());
+
+        // 键盘窗口的置顶跟随「面板是否在**前台**」，而不是「面板是否**开着**」。
+        //
+        // 面板是普通窗口，只要键盘还是置顶的就永远压在它上面，没法操作，所以
+        // 面板在前台时键盘必须让位。但判据不能是"面板还活着"——面板被别的窗口
+        // 盖住时它依然活着，只按生命周期判断的话键盘会永久保持非置顶，用户看到
+        // 的就是"键盘怎么不置顶了"，而且完全找不到原因（面板藏在别的窗口后面）。
+        //
+        // 所以改成事件驱动：面板被激活 → 键盘让位；面板一失活（用户点了别的
+        // 窗口、面板被压到后面）→ 立刻恢复键盘置顶。
+        let activation_sub = cx.observe_window_activation(window, |_this, window, _cx| {
+            set_keyboard_topmost(!window.is_window_active());
+        });
+
         let release_sub = cx.on_release(|_this, cx| {
             // 面板关闭：恢复主键盘置顶，并让主键盘重新同步宽度。
             state_mut(cx).settings_open = false;
@@ -68,6 +85,7 @@ impl SettingsView {
         });
         Self {
             _sub: sub,
+            _activation_sub: activation_sub,
             _release_sub: release_sub,
         }
     }
@@ -243,6 +261,18 @@ impl SettingsView {
             s.transparent,
             |v, cx| {
                 state_mut(cx).settings.transparent = v;
+                state::save_persisted(&state(cx).settings);
+            },
+            cx,
+        ));
+
+        page = page.child(Self::render_switch_row(
+            "row-keycap-transparent",
+            "键位透明背景",
+            "每个键帽不绘制背景，只保留边框与文字",
+            s.keycap_transparent,
+            |v, cx| {
+                state_mut(cx).settings.keycap_transparent = v;
                 state::save_persisted(&state(cx).settings);
             },
             cx,
