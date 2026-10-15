@@ -7,6 +7,7 @@
 //! "退出"会删除托盘图标并终止进程（gpui 在所有窗口关闭后不会自动退出）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 
 use windows::core::PCWSTR;
@@ -31,6 +32,29 @@ const TRAY_CALLBACK_MSG: u32 = WM_APP + 1;
 const MENU_TOGGLE_VISIBLE: usize = 1;
 const MENU_TOGGLE_PASSTHROUGH: usize = 2;
 const MENU_QUIT: usize = 3;
+const MENU_OPEN_SETTINGS: usize = 4;
+
+/// 托盘线程发往主线程（gpui 主循环）的事件。
+#[derive(Clone, Copy, Debug)]
+pub enum TrayEvent {
+    /// 打开设置面板。
+    OpenSettings,
+}
+
+/// 托盘事件发送端（由主线程注册）。
+static EVENT_TX: OnceLock<Sender<TrayEvent>> = OnceLock::new();
+
+/// 注册托盘事件发送端（主线程调用）。
+pub fn set_event_tx(tx: Sender<TrayEvent>) {
+    let _ = EVENT_TX.set(tx);
+}
+
+/// 向主线程发送一个托盘事件（托盘线程调用）。
+fn send_event(ev: TrayEvent) {
+    if let Some(tx) = EVENT_TX.get() {
+        let _ = tx.send(ev);
+    }
+}
 
 /// 主窗口句柄（由主线程在窗口创建后设置）。
 static MAIN_HWND: OnceLock<isize> = OnceLock::new();
@@ -148,6 +172,7 @@ extern "system" fn tray_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                 match wparam.0 & 0xffff {
                     MENU_TOGGLE_VISIBLE => toggle_main_window(),
                     MENU_TOGGLE_PASSTHROUGH => toggle_passthrough(),
+                    MENU_OPEN_SETTINGS => send_event(TrayEvent::OpenSettings),
                     MENU_QUIT => quit(),
                     _ => {}
                 }
@@ -235,6 +260,13 @@ fn show_context_menu(hwnd: HWND) {
             MF_STRING,
             MENU_TOGGLE_PASSTHROUGH,
             PCWSTR::from_raw(pt_label.as_ptr()),
+        );
+        let settings_label = wide("打开设置面板");
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            MENU_OPEN_SETTINGS,
+            PCWSTR::from_raw(settings_label.as_ptr()),
         );
         let quit_label = wide("退出");
         let _ = AppendMenuW(

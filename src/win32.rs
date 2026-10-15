@@ -6,16 +6,36 @@
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND};
+use windows::Win32::Foundation::{HINSTANCE, HWND, POINT, RECT};
+use std::sync::OnceLock;
+
+/// 主窗口句柄（由 main.rs 在窗口创建后设置，供托盘/设置窗口等访问）。
+static MAIN_HWND: OnceLock<isize> = OnceLock::new();
+
+/// 记录主窗口句柄。
+pub fn set_main_hwnd(hwnd: HWND) {
+    let _ = MAIN_HWND.set(hwnd.0 as isize);
+}
+
+/// 获取主窗口句柄（未设置时返回空句柄）。
+pub fn main_hwnd() -> HWND {
+    HWND(MAIN_HWND.get().copied().unwrap_or(0) as *mut _)
+}
+
+/// 主窗口句柄是否已记录（即主窗口是否已创建）。
+pub fn has_main_hwnd() -> bool {
+    MAIN_HWND.get().is_some()
+}
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMNCRENDERINGPOLICY, DWMWA_NCRENDERING_POLICY,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongW, LoadImageW, SendMessageW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE,
-    HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINDOW_EX_STYLE,
-    WM_SETICON, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GetCursorPos, GetWindowLongW, GetWindowRect, LoadImageW, SendMessageW, SetWindowLongW,
+    SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON,
+    LR_DEFAULTSIZE, LR_SHARED, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, WINDOW_EX_STYLE, WM_SETICON, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT,
 };
 
 /// 从任意实现 `HasWindowHandle` 的窗口对象中提取 HWND。
@@ -149,5 +169,33 @@ pub fn set_window_icon(hwnd: HWND) {
 pub fn move_window(hwnd: HWND, x: i32, y: i32) {
     unsafe {
         let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+}
+
+/// 获取当前鼠标的全局位置（虚拟屏幕物理像素）。
+///
+/// `GetCursorPos` 返回的是 Windows 虚拟屏幕坐标系下的**物理像素**，
+/// 与 `GetWindowRect` / `SetWindowPos` 完全一致，因此用它们做拖动运算
+/// 可以天然兼容多显示器、混合 DPI，无需任何 scale_factor 换算。
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_ok() {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
+/// 获取窗口左上角在虚拟屏幕中的位置（物理像素）。
+pub fn window_origin(hwnd: HWND) -> Option<(i32, i32)> {
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            Some((rect.left, rect.top))
+        } else {
+            None
+        }
     }
 }

@@ -1,13 +1,13 @@
 [package]
 name = "show-your-key"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["font-kit", "windows-manifest"] }
-gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9" }
-gpui-component = { version = "0.7.3", default-features = false }
+gpui-kit = { version = "0.7.3", default-features = false, features = ["component", "assets"] }
 raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
@@ -15,6 +15,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_Graphics_Dwm",
 ] }
 
