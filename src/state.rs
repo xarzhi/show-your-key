@@ -9,8 +9,8 @@ pub struct Settings {
     pub mouse_passthrough: bool,
     /// 背景透明（不绘制底板，仅显示键帽）。
     pub transparent: bool,
-    /// 显示数字小键盘。
-    pub show_numpad: bool,
+    /// 简洁模式：隐藏数字键盘、编辑区、方向键、顶部键，只保留主键盘区。
+    pub simple_mode: bool,
     /// 暗色主题。
     pub dark: bool,
 }
@@ -21,7 +21,7 @@ impl Default for Settings {
             mouse_passthrough: false,
             // 默认有背景（不透明），用户右键菜单选择"背景透明"后才变透明。
             transparent: false,
-            show_numpad: true,
+            simple_mode: false,
             dark: false,
         }
     }

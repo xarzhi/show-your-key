@@ -32,10 +32,9 @@ use gpui_component::theme::{Theme, ThemeMode};
 use crate::keyboard::{standard_layout, KeyDef, Layout};
 use crate::state::{state, state_mut, AppState};
 
-/// 非数字键盘区的逻辑宽度（主键盘 15u + 编辑区/方向键/顶部键 3u + 右侧间隙，共 0..18.45）。
-/// 这些键始终显示，与"显示数字键盘"开关无关。
-const MAIN_EXTENT_W: f32 = 18.45;
-/// 含数字键盘的键盘逻辑宽度（单位 u，0..22.9）。
+/// 主键盘区逻辑宽度（单位 u，0..15，简洁模式）。
+const SIMPLE_EXTENT_W: f32 = 15.0;
+/// 全键盘逻辑宽度（单位 u，0..22.9，含编辑区/方向键/顶部键 + 数字键盘）。
 const NUMPAD_EXTENT_W: f32 = 22.9;
 /// 键盘逻辑高度（单位 u，6 行）。
 const EXTENT_H: f32 = 6.0;
@@ -51,10 +50,11 @@ fn unit_from_height(h: f32) -> f32 {
     ((h - PADDING * 2.0) / EXTENT_H).max(1.0)
 }
 
-/// 由键帽单位和是否显示数字键盘，计算窗口应有的宽度。
-/// 宽度 = 2*PADDING + extent_w*unit（extent_w = MAIN_EXTENT_W 或 NUMPAD_EXTENT_W）。
-fn width_for(unit: f32, show_numpad: bool) -> f32 {
-    let extent_w = if show_numpad { NUMPAD_EXTENT_W } else { MAIN_EXTENT_W };
+/// 由键帽单位和显示模式，计算窗口应有的宽度。
+/// 宽度 = 2*PADDING + extent_w*unit。
+/// 简洁模式 = 只留主键盘区（15u）；否则 = 全键盘（含数字键盘，22.9u）。
+fn width_for(unit: f32, simple: bool) -> f32 {
+    let extent_w = if simple { SIMPLE_EXTENT_W } else { NUMPAD_EXTENT_W };
     PADDING * 2.0 + extent_w * unit
 }
 
@@ -74,14 +74,14 @@ impl KeyView {
 
         // 监听窗口尺寸变化，保持键盘比例（以高度为基准）。
         let bounds_subscription = cx.observe_window_bounds(_window, |_view, window, cx| {
-            let show_numpad = state(cx).settings.show_numpad;
+            let s = &state(cx).settings;
             let bounds = window.bounds();
             let w = bounds.size.width.as_f32();
             let h = bounds.size.height.as_f32();
-            // 以【高度】为基准：unit 由高度决定，宽度由 unit 和是否显示数字键盘决定。
-            // 这样主键盘区（左边）大小只随高度变化，数字键盘显示/隐藏只增减右侧宽度。
+            // 以【高度】为基准：unit 由高度决定，宽度由 unit 和显示模式决定。
+            // 这样主键盘区（左边）大小只随高度变化，右侧区域增减只改变宽度。
             let unit = unit_from_height(h);
-            let expected_w = width_for(unit, show_numpad);
+            let expected_w = width_for(unit, s.simple_mode);
             if (w - expected_w).abs() > 0.5 {
                 window.resize(Size {
                     width: px(expected_w),
@@ -175,11 +175,11 @@ impl KeyView {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let dark = settings.dark;
-        let show_numpad = settings.show_numpad;
+        let simple = settings.simple_mode;
 
         // 计算键帽尺寸：unit 由【高度】决定（键盘总高 6u）。
         // 这样主键盘区（左边）的键位大小只随窗口高度变化，
-        // 数字键盘显示/隐藏只增减右侧宽度，左边键位大小位置完全不动。
+        // 简洁模式切换只增减右侧宽度，左边键位大小位置完全不动。
         let viewport = window.viewport_size();
         let unit = unit_from_height(viewport.height.as_f32());
         let font_size = (unit * 0.24).max(7.0);
@@ -188,7 +188,9 @@ impl KeyView {
 
         let pressed_set = &state(cx).pressed;
         for def in &self.layout.keys {
-            if def.numpad && !show_numpad {
+            // 简洁模式：只显示主键盘区，隐藏右侧两大块
+            // （数字键盘 + 编辑区/方向键/顶部键）。
+            if simple && (def.numpad || def.nav) {
                 continue;
             }
             let pressed = pressed_set.contains(&(def.vk as u32));
@@ -279,11 +281,9 @@ impl Render for KeyView {
             .context_menu({
                 let passthrough = settings.mouse_passthrough;
                 let transparent = settings.transparent;
-                let show_numpad = settings.show_numpad;
+                let simple = settings.simple_mode;
                 let dark = settings.dark;
-                move |menu, _window, _cx| {
-                    build_menu(menu, passthrough, transparent, show_numpad, dark)
-                }
+                move |menu, _window, _cx| build_menu(menu, passthrough, transparent, simple, dark)
             });
 
         // 渲染键盘。
@@ -297,7 +297,7 @@ fn build_menu(
     menu: PopupMenu,
     passthrough: bool,
     transparent: bool,
-    show_numpad: bool,
+    simple: bool,
     dark: bool,
 ) -> PopupMenu {
     menu.item(
@@ -326,16 +326,17 @@ fn build_menu(
             }),
     )
     .item(
-        PopupMenuItem::new("显示数字键盘")
-            .checked(show_numpad)
+        PopupMenuItem::new("简洁模式")
+            .checked(simple)
             .on_click(|_e, window, cx| {
                 let s = &mut state_mut(cx).settings;
-                s.show_numpad = !s.show_numpad;
-                // 切换数字键盘：保持高度不变，只重算宽度。
-                // 这样主键盘区（左边）大小位置不变，只有右侧增减。
+                s.simple_mode = !s.simple_mode;
+                // 切换简洁模式：保持高度不变，只重算宽度。
+                // 开启 → 只留主键盘区（隐藏数字键盘 + 编辑区/方向键/顶部键）；
+                // 关闭 → 右侧两大块全部恢复。
                 let h = window.bounds().size.height.as_f32();
                 let unit = unit_from_height(h);
-                let new_w = width_for(unit, s.show_numpad);
+                let new_w = width_for(unit, s.simple_mode);
                 window.resize(Size {
                     width: px(new_w),
                     height: px(h),
@@ -388,8 +389,8 @@ fn main() {
             window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::centered(
                 None,
                 Size {
-                    // 初始 unit ≈ 36px：高 = 24 + 6*36 = 240，宽 = 24 + 20.5*36 = 762。
-                    width: px(width_for(36.0, true)),
+                    // 初始 unit ≈ 36px：高 = 24 + 6*36 = 240，宽按默认（非简洁 + 显示数字键盘）计算。
+                    width: px(width_for(36.0, false)),
                     height: px(2.0 * PADDING + EXTENT_H * 36.0),
                 },
                 cx,
